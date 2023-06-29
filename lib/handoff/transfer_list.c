@@ -17,11 +17,21 @@
 #define MUL_OVERFLOW(a, b, res) __builtin_mul_overflow((a), (b), (res))
 
 #define ROUNDUP_OVERFLOW(v, size, res) (__extension__({ \
-	uintptr_t __roundup_tmp = 0; \
-	uintptr_t __roundup_mask = (uintptr_t)(size) - 1; \
+	typeof(*(res)) __roundup_tmp = 0; \
+	typeof(v) __roundup_mask = (typeof(v))(size) - 1; \
 	\
 	ADD_OVERFLOW((v), __roundup_mask, &__roundup_tmp) ? 1 : \
 		(void)(*(res) = __roundup_tmp & ~__roundup_mask), 0; \
+}))
+
+#define ALIGN_MASK(p) ((1 << (p)) - 1)
+
+#define IS_ALIGNED(x, a) (((x) & ALIGN_MASK((typeof(x))(a))) == 0)
+
+#define ALIGN(x, a) (__extension__({ \
+	typeof(x) __a = (a); \
+	\
+	((x) + ALIGN_MASK((__a))) & ~ALIGN_MASK((__a)); \
 }))
 
 /*******************************************************************************
@@ -31,10 +41,10 @@
  ******************************************************************************/
 struct transfer_list_header *transfer_list_init(void *p, size_t max_size)
 {
-	uintptr_t mask = (1 << TRANSFER_LIST_INIT_MAX_ALIGN) - 1;
 	struct transfer_list_header *tl = p;
 
-	if (((uintptr_t)p & mask) || (max_size & mask) ||
+	if (!IS_ALIGNED((uintptr_t)p, TRANSFER_LIST_INIT_MAX_ALIGN) ||
+	    !IS_ALIGNED(max_size, TRANSFER_LIST_INIT_MAX_ALIGN) ||
 	    max_size < sizeof(*tl))
 		return NULL;
 
@@ -56,35 +66,33 @@ struct transfer_list_header *transfer_list_init(void *p, size_t max_size)
  ******************************************************************************/
 bool transfer_list_relocate(struct transfer_list_header *tl, void *p, size_t max_size)
 {
-	uintptr_t mask = (1 << tl->alignment) - 1;
 	uintptr_t new_tl_base = 0;
 	uintptr_t *np = (uintptr_t *)p;
 
 	if (!tl || !p || max_size == 0)
 		return false;
 
-	new_tl_base = (*np + mask) & ~mask;
+	new_tl_base = ALIGN(*np, tl->alignment);
 
 	if (new_tl_base < *np)
-		new_tl_base += mask + 1;
+		new_tl_base += (1 << tl->alignment);
 
 	if (new_tl_base - *np + tl->size > max_size)
 		return false;
 
-	memmove((void *)new_tl_base, (void *)tl, tl->size);
-	((struct transfer_list_header *)new_tl_base)->max_size = max_size; //to-check
+	memmove((void *)new_tl_base, tl, tl->size);
+	((struct transfer_list_header *)new_tl_base)->max_size = max_size - (new_tl_base - *np);
 	*np = new_tl_base;
 	transfer_list_update_checksum((struct transfer_list_header *)(*np));
 	return true;
 }
 
 /*******************************************************************************
- * Transfer list header checker
- * The format of the header is compliant to 2.2 of Firmware handoff
- * specification (v0.9)
- * Return true if header layout is correct or false if not
+ * Verifying the header of a transfer list
+ * Compliant to 2.4.1 of Firmware handoff specification (v0.9)
+ * Return true on success or false on error
  ******************************************************************************/
-static bool check_header(const struct transfer_list_header *tl)
+bool transfer_list_check_header(const struct transfer_list_header *tl)
 {
 	if (!tl)
 		return false;
@@ -108,20 +116,12 @@ static bool check_header(const struct transfer_list_header *tl)
 		ERROR("Bad transfer list size %#"PRIx32"\n", tl->size);
 		return false;
 	}
-	return true;
-}
-
-/*******************************************************************************
- * Verifying the header of a transfer list
- * Compliant to 2.4.1 of Firmware handoff specification (v0.9)
- * Return true on success or false on error
- ******************************************************************************/
-bool transfer_list_check_header(const struct transfer_list_header *tl)
-{
-	if (!tl || !check_header(tl))
+	if (tl->hdr_size != sizeof(struct transfer_list_header)) {
+		ERROR("Bad transfer list header size %#"PRIx32"\n", tl->hdr_size);
 		return false;
+	}
 	if (!transfer_list_verify_checksum(tl)) {
-		ERROR("Bad transfer list checksum %#x\n", tl->checksum);
+		ERROR("Bad transfer list checksum %#"PRIx32"\n", tl->checksum);
 		return false;
 	}
 	return true;
@@ -303,7 +303,7 @@ bool transfer_list_rem(struct transfer_list_header *tl, struct transfer_list_ent
  * Return pointer to the added transfer entry or NULL on error
  ******************************************************************************/
 struct transfer_list_entry *transfer_list_add(struct transfer_list_header *tl,
-					      uint8_t tag_id, uint32_t data_size,
+					      uint16_t tag_id, uint32_t data_size,
 					      const void *data)
 {
 	uintptr_t max_tl_ev, tl_ev, ev;
@@ -343,9 +343,9 @@ struct transfer_list_entry *transfer_list_add(struct transfer_list_header *tl,
 
 	// fill 0 to the TE data if input data is NULL
 	if (!data)
-		memset((void *)te_data, 0, data_size);
+		memset(te_data, 0, data_size);
 	else
-		memmove((void *)te_data, data, data_size);
+		memmove(te_data, data, data_size);
 	transfer_list_update_checksum(tl);
 
 	return te;
@@ -358,11 +358,11 @@ struct transfer_list_entry *transfer_list_add(struct transfer_list_header *tl,
  * Return pointer to the added transfer entry or NULL on error
  ******************************************************************************/
 struct transfer_list_entry *transfer_list_add_with_align(struct transfer_list_header *tl,
-							 uint8_t tag_id, uint32_t data_size,
+							 uint16_t tag_id, uint32_t data_size,
 							 const void *data, uint8_t alignment)
 {
-	uintptr_t mask = (1 << alignment) - 1;
 	struct transfer_list_entry *te = NULL;
+	uintptr_t tl_ev;
 
 	if (!tl)
 		return NULL;
@@ -370,9 +370,10 @@ struct transfer_list_entry *transfer_list_add_with_align(struct transfer_list_he
 	// TE start address is not aligned to the new alignment
 	// fill the gap with an empty TE as a placeholder before
 	// adding the desire TE
-	if (((uintptr_t)tl + tl->size) & mask)
+	tl_ev = (uintptr_t)tl + tl->size;
+	if (!IS_ALIGNED(tl_ev, alignment))
 		if (!transfer_list_add(tl, TL_TAG_EMPTY,
-				       (1 << alignment) - (((uintptr_t)tl + tl->size) & mask) - 0x8,
+				       ALIGN(tl_ev, alignment) - tl_ev,
 				       NULL))
 			return NULL;
 
@@ -391,7 +392,7 @@ struct transfer_list_entry *transfer_list_add_with_align(struct transfer_list_he
  * Return pointer to the found transfer entry or NULL on error
  ******************************************************************************/
 struct transfer_list_entry *transfer_list_find(struct transfer_list_header *tl,
-					       uint8_t tag_id)
+					       uint16_t tag_id)
 {
 	struct transfer_list_entry *te = NULL;
 

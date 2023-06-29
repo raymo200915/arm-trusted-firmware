@@ -36,7 +36,7 @@ struct transfer_list_header {
 	uint32_t	size;		// TL header + all TEs
 	uint32_t	max_size;
 	/*
-	 * Commented out element used to visualze dynamic part of the
+	 * Commented out element used to visualize dynamic part of the
 	 * data structure.
 	 *
 	 * Note that struct transfer_list_entry also is dynamic in size
@@ -48,12 +48,12 @@ struct transfer_list_header {
 };
 
 struct transfer_list_entry {
-	uint8_t		tag_id;
-	uint8_t		reserved0[2];
+	uint16_t	tag_id;
+	uint8_t		reserved0;	// place holder
 	uint8_t		hdr_size;
 	uint32_t	data_size;
 	/*
-	 * Commented out element used to visualze dynamic part of the
+	 * Commented out element used to visualize dynamic part of the
 	 * data structure.
 	 *
 	 * Note that padding is added at the end of @data to make to reach
@@ -87,18 +87,18 @@ static inline void *transfer_list_data(struct transfer_list_entry *entry)
 bool transfer_list_rem(struct transfer_list_header *tl, struct transfer_list_entry *entry);
 
 struct transfer_list_entry *transfer_list_add(struct transfer_list_header *tl,
-					      uint8_t tag_id, uint32_t data_size,
+					      uint16_t tag_id, uint32_t data_size,
 					      const void *data);
 
 struct transfer_list_entry *transfer_list_add_with_align(struct transfer_list_header *tl,
-							 uint8_t tag_id, uint32_t data_size,
+							 uint16_t tag_id, uint32_t data_size,
 							 const void *data, uint8_t alignment);
 
 struct transfer_list_entry *transfer_list_next(struct transfer_list_header *tl,
 					       struct transfer_list_entry *last);
 
 struct transfer_list_entry *transfer_list_find(struct transfer_list_header *tl,
-					       uint8_t tag_id);
+					       uint16_t tag_id);
 
 #endif /*__ASSEMBLER__*/
 #endif /*__KERNEL_TRANSFER_LIST_H*/

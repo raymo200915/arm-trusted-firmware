@@ -353,9 +353,12 @@ static int qemu_bl2_handle_post_image_load(unsigned int image_id)
 			// relocate the tl to pre-allocate NS memory
 			uintptr_t ns_base = FW_NS_HANDOFF_BASE;
 
-			transfer_list_relocate(bl2_tl, &ns_base, bl2_tl->max_size);
+			if (!transfer_list_relocate(bl2_tl, &ns_base, bl2_tl->max_size)) {
+				ERROR("Failed to relocate the transfer list to NS memory at 0x%lx\n",
+				      (unsigned long)ns_base);
+				return -1;
+			}
 
-			// debug start
 			struct transfer_list_header *ns_tl = (struct transfer_list_header *)ns_base;
 			struct transfer_list_entry *te = NULL;
 
@@ -380,7 +383,6 @@ static int qemu_bl2_handle_post_image_load(unsigned int image_id)
 				NOTICE("data_addr  0x%lx\n",
 				(unsigned long)transfer_list_data(te));
 			}
-			// debug end
 
 			bl_mem_params->ep_info.args.arg3 = ns_base;
 		}
