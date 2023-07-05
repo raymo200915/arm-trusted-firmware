@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2022, ARM Limited and Contributors. All rights reserved.
+ * Copyright (c) 2015-2023, Arm Limited and Contributors. All rights reserved.
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -52,6 +52,7 @@ static meminfo_t bl2_tzram_layout __aligned(CACHE_WRITEBACK_GRANULE);
 
 #if HANDOFF
 static struct transfer_list_header *bl2_tl;
+#define REGISTER_CONVENTION_VERSION_MASK (1 << 24)
 #endif
 
 void bl2_early_platform_setup2(u_register_t arg0, u_register_t arg1,
@@ -279,6 +280,10 @@ static int qemu_bl2_handle_post_image_load(unsigned int image_id)
 #if defined(SPD_spmd)
 	bl_mem_params_node_t *bl32_mem_params = NULL;
 #endif
+#if HANDOFF
+	struct transfer_list_header *ns_tl = NULL;
+	struct transfer_list_entry *te = NULL;
+#endif
 
 	assert(bl_mem_params);
 
@@ -348,23 +353,19 @@ static int qemu_bl2_handle_post_image_load(unsigned int image_id)
 #else
 #if HANDOFF
 		if (bl2_tl) {
-			bl_mem_params->ep_info.args.arg1 =
-						TRANSFER_LIST_SIGNATURE;
 			// relocate the tl to pre-allocate NS memory
-			uintptr_t ns_base = FW_NS_HANDOFF_BASE;
-
-			if (!transfer_list_relocate(bl2_tl, &ns_base, bl2_tl->max_size)) {
-				ERROR("Failed to relocate the transfer list to NS memory at 0x%lx\n",
-				      (unsigned long)ns_base);
+			ns_tl = transfer_list_relocate(bl2_tl,
+						       (void *)(uintptr_t)FW_NS_HANDOFF_BASE,
+						       bl2_tl->max_size);
+			if (!ns_tl) {
+				ERROR("Failed to relocate the transfer list to NS memory 0x%lx\n",
+				      (unsigned long)FW_NS_HANDOFF_BASE);
 				return -1;
 			}
 
-			struct transfer_list_header *ns_tl = (struct transfer_list_header *)ns_base;
-			struct transfer_list_entry *te = NULL;
-
 			NOTICE("Transfer list before handing over to BL33:\n");
 			NOTICE("TL address relocated from 0x%lx to 0x%lx\n",
-			       (uintptr_t)bl2_tl, ns_base);
+			       (uintptr_t)bl2_tl, (uintptr_t)ns_tl);
 			NOTICE("signature  0x%x\n", ns_tl->signature);
 			NOTICE("checksum   0x%x\n", ns_tl->checksum);
 			NOTICE("version    0x%x\n", ns_tl->version);
@@ -384,7 +385,27 @@ static int qemu_bl2_handle_post_image_load(unsigned int image_id)
 				(unsigned long)transfer_list_data(te));
 			}
 
-			bl_mem_params->ep_info.args.arg3 = ns_base;
+			te = transfer_list_find(ns_tl, TL_TAG_FDT);
+
+			bl_mem_params->ep_info.args.arg1 =
+				TRANSFER_LIST_SIGNATURE | REGISTER_CONVENTION_VERSION_MASK;
+			bl_mem_params->ep_info.args.arg3 = (uintptr_t)ns_tl;
+
+#ifdef AARCH32_SP_OPTEE
+			bl_mem_params->ep_info.args.arg0 = 0;
+			if (te)
+				bl_mem_params->ep_info.args.arg2 =
+					(uintptr_t)transfer_list_data(te);
+			else
+				bl_mem_params->ep_info.args.arg2 = 0;
+#else
+			if (te)
+				bl_mem_params->ep_info.args.arg0 =
+					(uintptr_t)transfer_list_data(te);
+			else
+				bl_mem_params->ep_info.args.arg0 = 0;
+			bl_mem_params->ep_info.args.arg2 = 0;
+#endif
 		}
 #endif
 		/* BL33 expects to receive the primary CPU MPID (through r0) */

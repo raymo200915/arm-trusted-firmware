@@ -63,10 +63,10 @@ struct transfer_list_entry {
 	 */
 };
 
-struct transfer_list_header *transfer_list_init(void *p, size_t max_size);
+struct transfer_list_header *transfer_list_init(void *addr, size_t max_size);
 
-bool transfer_list_relocate(struct transfer_list_header *tl, void *p, size_t max_size);
-
+struct transfer_list_header *transfer_list_relocate(struct transfer_list_header *tl,
+						    void *addr, size_t max_size);
 bool transfer_list_check_header(const struct transfer_list_header *tl);
 
 void transfer_list_update_checksum(struct transfer_list_header *tl);

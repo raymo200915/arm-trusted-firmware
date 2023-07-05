@@ -17,11 +17,12 @@
 #define MUL_OVERFLOW(a, b, res) __builtin_mul_overflow((a), (b), (res))
 
 #define ROUNDUP_OVERFLOW(v, size, res) (__extension__({ \
-	typeof(*(res)) __roundup_tmp = 0; \
+	typeof(res) __res = res; \
+	typeof(*(__res)) __roundup_tmp = 0; \
 	typeof(v) __roundup_mask = (typeof(v))(size) - 1; \
 	\
 	ADD_OVERFLOW((v), __roundup_mask, &__roundup_tmp) ? 1 : \
-		(void)(*(res) = __roundup_tmp & ~__roundup_mask), 0; \
+		(void)(*(__res) = __roundup_tmp & ~__roundup_mask), 0; \
 }))
 
 #define ALIGN_MASK(p) ((1 << (p)) - 1)
@@ -39,11 +40,14 @@
  * Compliant to 2.4.5 of Firmware handoff specification (v0.9)
  * Return pointer to the created transfer list or NULL on error
  ******************************************************************************/
-struct transfer_list_header *transfer_list_init(void *p, size_t max_size)
+struct transfer_list_header *transfer_list_init(void *addr, size_t max_size)
 {
-	struct transfer_list_header *tl = p;
+	struct transfer_list_header *tl = addr;
 
-	if (!IS_ALIGNED((uintptr_t)p, TRANSFER_LIST_INIT_MAX_ALIGN) ||
+	if (!addr || max_size == 0)
+		return NULL;
+
+	if (!IS_ALIGNED((uintptr_t)addr, TRANSFER_LIST_INIT_MAX_ALIGN) ||
 	    !IS_ALIGNED(max_size, TRANSFER_LIST_INIT_MAX_ALIGN) ||
 	    max_size < sizeof(*tl))
 		return NULL;
@@ -64,27 +68,32 @@ struct transfer_list_header *transfer_list_init(void *p, size_t max_size)
  * Compliant to 2.4.6 of Firmware handoff specification (v0.9)
  * Return true on success or false on error
  ******************************************************************************/
-bool transfer_list_relocate(struct transfer_list_header *tl, void *p, size_t max_size)
+struct transfer_list_header *transfer_list_relocate(struct transfer_list_header *tl,
+						    void *addr, size_t max_size)
 {
-	uintptr_t new_tl_base = 0;
-	uintptr_t *np = (uintptr_t *)p;
+	uintptr_t aligned_addr;
+	struct transfer_list_header *new_tl;
+	uint32_t new_max_size;
 
-	if (!tl || !p || max_size == 0)
-		return false;
+	if (!tl || !addr || max_size == 0)
+		return NULL;
 
-	new_tl_base = ALIGN(*np, tl->alignment);
+	aligned_addr = ALIGN((uintptr_t)addr, tl->alignment);
 
-	if (new_tl_base < *np)
-		new_tl_base += (1 << tl->alignment);
+	if (aligned_addr < (uintptr_t)addr)
+		aligned_addr += (1 << tl->alignment);
 
-	if (new_tl_base - *np + tl->size > max_size)
-		return false;
+	new_max_size = max_size - (aligned_addr - (uintptr_t)addr);
+	// the new space is not sufficient for the tl
+	if (tl->size > new_max_size)
+		return NULL;
 
-	memmove((void *)new_tl_base, tl, tl->size);
-	((struct transfer_list_header *)new_tl_base)->max_size = max_size - (new_tl_base - *np);
-	*np = new_tl_base;
-	transfer_list_update_checksum((struct transfer_list_header *)(*np));
-	return true;
+	new_tl = (struct transfer_list_header *)aligned_addr;
+	memmove(new_tl, tl, tl->size);
+	new_tl->max_size = new_max_size;
+	transfer_list_update_checksum(new_tl);
+
+	return new_tl;
 }
 
 /*******************************************************************************
