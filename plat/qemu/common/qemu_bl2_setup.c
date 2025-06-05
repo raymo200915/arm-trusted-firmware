@@ -82,6 +82,7 @@ static void update_dt(void)
 	int ret;
 	void *fdt = (void *)(uintptr_t)ARM_PRELOADED_DTB_BASE;
 	void *dst = plat_qemu_dt_runtime_address();
+	void *dto = (void *)(uintptr_t)PLAT_QEMU_DTO_BASE;
 
 	ret = fdt_open_into(fdt, dst, PLAT_QEMU_DT_MAX_SIZE);
 	if (ret < 0) {
@@ -121,6 +122,17 @@ static void update_dt(void)
 	if (!te) {
 		ERROR("Failed to add FDT entry to Transfer List\n");
 		return;
+	}
+
+	ret = fdt_check_header(dto);
+	if (!ret) {
+		INFO("Valid overlay DTB detected\n");
+		te = transfer_list_add(bl2_tl, TL_TAG_DTO, fdt_totalsize(dto),
+				       dto);
+		if (!te) {
+			ERROR("Failed to add DTO entry to Transfer List\n");
+			return;
+		}
 	}
 #endif
 }
